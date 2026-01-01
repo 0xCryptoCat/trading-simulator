@@ -1,0 +1,15 @@
+{
+  "name": "alphalert-trading-simulator",
+  "version": "1.0.0",
+  "description": "Paper trading simulator for Alphalert signals",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
