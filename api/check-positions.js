@@ -150,12 +150,16 @@ export default async function handler(req, res) {
     // Post summary if there were changes
     if (closed.length > 0 || trailActivated.length > 0) {
       const stats = db.getStats();
+      const openPos = db.getOpenPositions();
+      const activeCapital = openPos.reduce((sum, p) => sum + (p.size || 0), 0);
+
       const summaryMsg = `📊 <b>Portfolio Update</b>
 
-📈 Open: ${stats.openPositions}
-✅ Closed: ${stats.closedPositions}
-💰 Total PnL: $${stats.totalPnL.toFixed(2)}
-🎯 Win Rate: ${stats.winRate}%`;
+💰 <b>Active Capital:</b> $${activeCapital.toFixed(2)}
+📈 <b>Open Positions:</b> ${stats.openPositions}
+📉 <b>Realized PnL:</b> ${stats.totalPnL >= 0 ? '+' : ''}$${stats.totalPnL.toFixed(2)}
+🏆 <b>Wins:</b> ${stats.winCount} | 💀 <b>Losses:</b> ${stats.lossCount}
+🎯 <b>Win Rate:</b> ${stats.winRate}%`;
       
       await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, summaryMsg);
     }
