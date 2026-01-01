@@ -153,6 +153,15 @@ export default async function handler(req, res) {
       const openPos = db.getOpenPositions();
       const activeCapital = openPos.reduce((sum, p) => sum + (p.size || 0), 0);
       const unrealizedPnL = openPos.reduce((sum, p) => sum + (p.unrealizedPnL || 0), 0);
+      const netPnL = stats.totalPnL + unrealizedPnL;
+      
+      // Calculate Effective Win Rate
+      const openWins = openPos.filter(p => (p.unrealizedPnL || 0) >= 0).length;
+      const openLosses = openPos.filter(p => (p.unrealizedPnL || 0) < 0).length;
+      const totalWins = stats.winCount + openWins;
+      const totalLosses = stats.lossCount + openLosses;
+      const totalCount = totalWins + totalLosses;
+      const winRate = totalCount > 0 ? ((totalWins / totalCount) * 100).toFixed(1) : '0.0';
 
       const summaryMsg = `📊 <b>Portfolio Update</b>
 
@@ -160,8 +169,11 @@ export default async function handler(req, res) {
 📈 <b>Open Positions:</b> ${stats.openPositions}
 📉 <b>Realized PnL:</b> ${stats.totalPnL >= 0 ? '+' : ''}$${stats.totalPnL.toFixed(2)}
 💸 <b>Unrealized PnL:</b> ${unrealizedPnL >= 0 ? '+' : ''}$${unrealizedPnL.toFixed(2)}
-🏆 <b>Wins:</b> ${stats.winCount} | 💀 <b>Losses:</b> ${stats.lossCount}
-🎯 <b>Win Rate:</b> ${stats.winRate}%`;
+
+<b>Net PnL:</b> ${netPnL >= 0 ? '+' : ''}$${netPnL.toFixed(2)}
+
+🏆 <b>Wins:</b> ${totalWins} | 💀 <b>Losses:</b> ${totalLosses}
+🎯 <b>Win Rate:</b> ${winRate}%`;
       
       await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, summaryMsg);
     }
