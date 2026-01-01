@@ -143,7 +143,13 @@ cd trading-simulator
 vercel --prod
 ```
 
-Then set up cron-job.org to ping `/api/check-positions` every 5 minutes.
+**Important**: Vercel Hobby plan does not support frequent cron jobs. You MUST set up an external cron service:
+
+1. Go to [cron-job.org](https://cron-job.org) (free)
+2. Create a new cron job
+3. URL: `https://YOUR-VERCEL-PROJECT.vercel.app/api/check-positions`
+4. Schedule: Every 5 minutes
+5. Save
 
 ## Notifications
 
