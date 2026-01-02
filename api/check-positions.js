@@ -156,12 +156,6 @@ export default async function handler(req, res) {
       await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, msg);
     }
     
-    // Post summary if there were changes
-    if (closed.length > 0 || trailActivated.length > 0) {
-      const summaryMsg = db.generateSummary();
-      await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, summaryMsg);
-    }
-    
     return res.status(200).json({
       status: 'ok',
       checked: openPositions.length,
