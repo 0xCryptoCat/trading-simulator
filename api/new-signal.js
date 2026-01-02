@@ -59,13 +59,34 @@ export default async function handler(req, res) {
     const db = new SimulatorDB(botToken);
     await db.load();
     
-    // Check if position already exists
+    // Check if position already exists (active OR closed)
     const existing = db.getPosition(tokenAddress);
-    if (existing && existing.status !== 'exited') {
-      return res.status(200).json({ 
-        status: 'exists', 
-        message: 'Position already open',
+    if (existing) {
+      // If active, definitely don't buy
+      if (existing.status !== 'exited') {
+        return res.status(200).json({ 
+          status: 'exists', 
+          message: 'Position already open',
+          position: existing
+        });
+      }
+      
+      // If exited, check if we want to re-enter (currently: NO)
+      // This prevents double-buying the same token if multiple signals come in
+      return res.status(200).json({
+        status: 'exists',
+        message: 'Position previously closed (no re-entry)',
         position: existing
+      });
+    }
+    
+    // Also check history to be safe (in case position was removed from active map)
+    const inHistory = db.db.history?.find(h => h.address === tokenAddress);
+    if (inHistory) {
+      return res.status(200).json({
+        status: 'exists',
+        message: 'Token in history (no re-entry)',
+        history: inHistory
       });
     }
     
