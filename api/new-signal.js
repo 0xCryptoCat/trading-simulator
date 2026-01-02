@@ -103,15 +103,14 @@ export default async function handler(req, res) {
     const position = db.getPosition(tokenAddress);
     
     // Show both prices if they differ significantly
-    const priceDisplay = entryPrice < 0.0001 ? entryPrice.toExponential(2) : entryPrice.toFixed(6);
-    const diffNote = Math.abs(priceDiff) > 10 
+    const priceDisplay = entryPrice
       ? `\n<i>Signal: $${signalPriceNum < 0.0001 ? signalPriceNum.toExponential(2) : signalPriceNum.toFixed(6)} (${priceDiff > 0 ? '+' : ''}${priceDiff.toFixed(0)}% vs live)</i>` 
       : '';
     
     const msg = `${chainTag} <b>NEW POSITION</b>
 
 <b>Token:</b> ${symbol || tokenAddress.slice(0, 8)}
-<b>Entry:</b> $${priceDisplay}${diffNote}
+<b>Entry:</b> $${priceDisplay}
 <b>Size:</b> $${position.size}
 <b>Score:</b> ${score?.toFixed(2) || 'N/A'}
 
