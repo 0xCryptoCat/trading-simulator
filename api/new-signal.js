@@ -54,7 +54,7 @@ export default async function handler(req, res) {
     await db.save();
     
     // Send notification
-    const chainTag = { sol: '🟣', eth: '🔵', bsc: '🟡', base: '🔷' }[chain?.toLowerCase()] || '📊';
+    const chainTag = { sol: '🟣', eth: '🔷', bsc: '🔶', base: '🔵' }[chain?.toLowerCase()] || '📊';
     const position = db.getPosition(tokenAddress);
     
     const msg = `${chainTag} <b>NEW POSITION</b>
