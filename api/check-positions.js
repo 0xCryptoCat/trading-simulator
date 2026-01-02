@@ -158,32 +158,7 @@ export default async function handler(req, res) {
     
     // Post summary if there were changes
     if (closed.length > 0 || trailActivated.length > 0) {
-      const stats = db.getStats();
-      const openPos = db.getOpenPositions();
-      const activeCapital = openPos.reduce((sum, p) => sum + (p.size || 0), 0);
-      const unrealizedPnL = openPos.reduce((sum, p) => sum + (p.unrealizedPnL || 0), 0);
-      const netPnL = stats.totalPnL + unrealizedPnL;
-      
-      // Calculate Effective Win Rate
-      const openWins = openPos.filter(p => (p.unrealizedPnL || 0) >= 0).length;
-      const openLosses = openPos.filter(p => (p.unrealizedPnL || 0) < 0).length;
-      const totalWins = stats.winCount + openWins;
-      const totalLosses = stats.lossCount + openLosses;
-      const totalCount = totalWins + totalLosses;
-      const winRate = totalCount > 0 ? ((totalWins / totalCount) * 100).toFixed(1) : '0.0';
-
-      const roi = stats.totalCapitalDeployed > 0 ? ((netPnL / stats.totalCapitalDeployed) * 100).toFixed(1) : '0.0';
-
-      const summaryMsg = `📊 <b>Portfolio Update</b>
-
-🏦 <b>Balance:</b> $${(5000 + netPnL).toLocaleString()} (${netPnL >= 0 ? '+' : ''}$${netPnL.toFixed(0)})
-💵 <b>Active:</b> $${activeCapital.toFixed(0)} (${stats.openPositions} open)
-
-💰 <b>Realized:</b> ${stats.totalPnL >= 0 ? '+' : ''}$${stats.totalPnL.toFixed(2)}
-💸 <b>Unrealized:</b> ${unrealizedPnL >= 0 ? '+' : ''}$${unrealizedPnL.toFixed(2)}
-
-🏆 <b>Win Rate:</b> ${winRate}% (${totalWins}W / ${totalLosses}L)`;
-      
+      const summaryMsg = db.generateSummary();
       await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, summaryMsg);
     }
     
