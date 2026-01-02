@@ -72,8 +72,12 @@ export default async function handler(req, res) {
     await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, msg);
     
     // Trigger Userbot to send token address
-    // This runs asynchronously and doesn't block the response
-    sendUserbotMessage(tokenAddress).catch(err => console.error('Userbot trigger failed:', err));
+    // Must await this in Vercel/Serverless environment or process will be killed
+    try {
+      await sendUserbotMessage(tokenAddress);
+    } catch (err) {
+      console.error('Userbot trigger failed:', err);
+    }
 
     return res.status(200).json({
       status: 'opened',
