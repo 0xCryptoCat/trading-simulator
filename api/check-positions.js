@@ -114,14 +114,18 @@ export default async function handler(req, res) {
     // Send notifications for trail activations
     for (const t of trailActivated) {
       const mult = (t.currentPrice / t.entryPrice).toFixed(2);
+      const pnlPct = ((mult - 1) * 100).toFixed(0);
+      const pnlUsd = ((mult - 1) * 250).toFixed(0);
+      
       const msg = `🚀 <b>TRAIL ACTIVATED</b>
 
-<b>Token:</b> ${t.symbol}
-<b>Entry:</b> $${t.entryPrice < 0.0001 ? t.entryPrice.toExponential(2) : t.entryPrice.toFixed(6)}
-<b>Current:</b> $${t.currentPrice < 0.0001 ? t.currentPrice.toExponential(2) : t.currentPrice.toFixed(6)}
-<b>Gain:</b> ${mult}x (+${((mult - 1) * 100).toFixed(0)}%)
+<b>${t.symbol}</b>
+📥 Entry: $${t.entryPrice < 0.0001 ? t.entryPrice.toExponential(2) : t.entryPrice.toFixed(6)}
+📊 Current: $${t.currentPrice < 0.0001 ? t.currentPrice.toExponential(2) : t.currentPrice.toFixed(6)}
+📈 Gain: <b>${mult}x (+${pnlPct}% / +$${pnlUsd})</b>
 
-🛑 Trail stop set at: $${t.trailPrice < 0.0001 ? t.trailPrice.toExponential(2) : t.trailPrice.toFixed(6)}
+🛑 Trail stop: $${t.trailPrice < 0.0001 ? t.trailPrice.toExponential(2) : t.trailPrice.toFixed(6)} (-5%)
+🔒 Locked: +$${((t.trailPrice / t.entryPrice - 1) * 250).toFixed(0)} min
 
 <code>${t.address}</code>`;
       
@@ -131,16 +135,21 @@ export default async function handler(req, res) {
     // Send notifications for closed positions
     for (const c of closed) {
       const mult = (c.exitPrice / c.entryPrice).toFixed(2);
-      const pnlEmoji = c.pnl >= 0 ? '💰' : '📉';
+      const pnlEmoji = c.pnl >= 0 ? '💰' : '�';
       const pnlStr = c.pnl >= 0 ? `+$${c.pnl.toFixed(2)}` : `-$${Math.abs(c.pnl).toFixed(2)}`;
       
-      const msg = `${pnlEmoji} <b>POSITION CLOSED</b>
+      // Different header for stop loss vs trail
+      const header = c.reason === 'stop_loss' 
+        ? '🛑 <b>STOP LOSS HIT</b>' 
+        : (c.pnl >= 0 ? '💰 <b>POSITION CLOSED</b>' : '📉 <b>POSITION CLOSED</b>');
+      
+      const msg = `${header}
 
 <b>Token:</b> ${c.symbol}
 <b>Entry:</b> $${c.entryPrice < 0.0001 ? c.entryPrice.toExponential(2) : c.entryPrice.toFixed(6)}
 <b>Exit:</b> $${c.exitPrice < 0.0001 ? c.exitPrice.toExponential(2) : c.exitPrice.toFixed(6)}
 <b>Result:</b> ${mult}x (${pnlStr})
-<b>Reason:</b> ${c.reason}
+<b>Reason:</b> ${c.reason === 'stop_loss' ? 'Hard Stop (-15%)' : c.reason}
 
 <code>${c.address}</code>`;
       
@@ -163,17 +172,17 @@ export default async function handler(req, res) {
       const totalCount = totalWins + totalLosses;
       const winRate = totalCount > 0 ? ((totalWins / totalCount) * 100).toFixed(1) : '0.0';
 
+      const roi = stats.totalCapitalDeployed > 0 ? ((netPnL / stats.totalCapitalDeployed) * 100).toFixed(1) : '0.0';
+
       const summaryMsg = `📊 <b>Portfolio Update</b>
 
-💰 <b>Active Capital:</b> $${activeCapital.toFixed(2)}
-📈 <b>Open Positions:</b> ${stats.openPositions}
-📉 <b>Realized PnL:</b> ${stats.totalPnL >= 0 ? '+' : ''}$${stats.totalPnL.toFixed(2)}
-💸 <b>Unrealized PnL:</b> ${unrealizedPnL >= 0 ? '+' : ''}$${unrealizedPnL.toFixed(2)}
+🏦 <b>Balance:</b> $${(5000 + netPnL).toLocaleString()} (${netPnL >= 0 ? '+' : ''}$${netPnL.toFixed(0)})
+💵 <b>Active:</b> $${activeCapital.toFixed(0)} (${stats.openPositions} open)
 
-<b>Net PnL:</b> ${netPnL >= 0 ? '+' : ''}$${netPnL.toFixed(2)}
+💰 <b>Realized:</b> ${stats.totalPnL >= 0 ? '+' : ''}$${stats.totalPnL.toFixed(2)}
+💸 <b>Unrealized:</b> ${unrealizedPnL >= 0 ? '+' : ''}$${unrealizedPnL.toFixed(2)}
 
-🏆 <b>Wins:</b> ${totalWins} | 💀 <b>Losses:</b> ${totalLosses}
-🎯 <b>Win Rate:</b> ${winRate}%`;
+🏆 <b>Win Rate:</b> ${winRate}% (${totalWins}W / ${totalLosses}L)`;
       
       await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, summaryMsg);
     }
