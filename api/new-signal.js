@@ -11,6 +11,34 @@
 import { SimulatorDB, sendTelegramMessage, SIMULATOR_CHANNEL } from '../lib/simulator-db.js';
 import { sendUserbotMessage } from '../lib/userbot.js';
 
+// Fetch LIVE price from DexScreener (more accurate than OKX signal price)
+async function fetchLivePrice(chain, tokenAddress) {
+  const chainMap = {
+    'sol': 'solana',
+    'eth': 'ethereum', 
+    'bsc': 'bsc',
+    'base': 'base'
+  };
+  
+  const dexChain = chainMap[chain?.toLowerCase()] || 'solana';
+  const url = `https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`;
+  
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    
+    if (data.pairs && data.pairs.length > 0) {
+      // Find pair on correct chain
+      const pair = data.pairs.find(p => p.chainId === dexChain) || data.pairs[0];
+      return parseFloat(pair.priceUsd) || 0;
+    }
+  } catch (e) {
+    console.error(`Price fetch error for ${tokenAddress}:`, e.message);
+  }
+  
+  return 0;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -21,9 +49,9 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Missing TELEGRAM_BOT_TOKEN' });
   }
   
-  const { tokenAddress, chain, symbol, entryPrice, score, signalMsgId } = req.body;
+  const { tokenAddress, chain, symbol, entryPrice: signalPrice, score, signalMsgId } = req.body;
   
-  if (!tokenAddress || !entryPrice) {
+  if (!tokenAddress) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
   
@@ -41,11 +69,28 @@ export default async function handler(req, res) {
       });
     }
     
-    // Open new position
+    // Fetch LIVE price from DexScreener (overrides OKX signal price)
+    // This is the actual market price we'd pay if trading live
+    const livePrice = await fetchLivePrice(chain, tokenAddress);
+    const entryPrice = livePrice > 0 ? livePrice : parseFloat(signalPrice) || 0;
+    
+    if (entryPrice === 0) {
+      return res.status(400).json({ error: 'Could not determine entry price' });
+    }
+    
+    // Log if there's a significant difference between signal and live price
+    const signalPriceNum = parseFloat(signalPrice) || 0;
+    const priceDiff = signalPriceNum > 0 ? ((entryPrice / signalPriceNum - 1) * 100) : 0;
+    if (Math.abs(priceDiff) > 10) {
+      console.log(`   ⚠️ Price difference: Signal $${signalPriceNum} vs Live $${entryPrice} (${priceDiff.toFixed(1)}%)`);
+    }
+    
+    // Open new position with LIVE price
     db.addPosition(tokenAddress, {
       chain: chain || 'SOL',
       symbol: symbol || tokenAddress.slice(0, 8),
-      entryPrice: parseFloat(entryPrice),
+      entryPrice: entryPrice,
+      signalPrice: signalPriceNum, // Store original signal price for reference
       score: parseFloat(score) || 0,
       size: db.db.config.positionSize,
       signalMsgId
@@ -57,10 +102,16 @@ export default async function handler(req, res) {
     const chainTag = { sol: '🟣', eth: '🔷', bsc: '🔶', base: '🔵' }[chain?.toLowerCase()] || '📊';
     const position = db.getPosition(tokenAddress);
     
+    // Show both prices if they differ significantly
+    const priceDisplay = entryPrice < 0.0001 ? entryPrice.toExponential(2) : entryPrice.toFixed(6);
+    const diffNote = Math.abs(priceDiff) > 10 
+      ? `\n<i>Signal: $${signalPriceNum < 0.0001 ? signalPriceNum.toExponential(2) : signalPriceNum.toFixed(6)} (${priceDiff > 0 ? '+' : ''}${priceDiff.toFixed(0)}% vs live)</i>` 
+      : '';
+    
     const msg = `${chainTag} <b>NEW POSITION</b>
 
 <b>Token:</b> ${symbol || tokenAddress.slice(0, 8)}
-<b>Entry:</b> $${entryPrice < 0.0001 ? parseFloat(entryPrice).toExponential(2) : parseFloat(entryPrice).toFixed(6)}
+<b>Entry:</b> $${priceDisplay}${diffNote}
 <b>Size:</b> $${position.size}
 <b>Score:</b> ${score?.toFixed(2) || 'N/A'}
 
