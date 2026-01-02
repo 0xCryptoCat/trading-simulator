@@ -9,6 +9,7 @@
  */
 
 import { SimulatorDB, sendTelegramMessage, SIMULATOR_CHANNEL } from '../lib/simulator-db.js';
+import { sendUserbotMessage } from '../lib/userbot.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -70,6 +71,10 @@ export default async function handler(req, res) {
     
     await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, msg);
     
+    // Trigger Userbot to send token address
+    // This runs asynchronously and doesn't block the response
+    sendUserbotMessage(tokenAddress).catch(err => console.error('Userbot trigger failed:', err));
+
     return res.status(200).json({
       status: 'opened',
       position: position,

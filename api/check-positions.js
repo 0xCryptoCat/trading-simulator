@@ -120,11 +120,11 @@ export default async function handler(req, res) {
       const msg = `🚀 <b>TRAIL ACTIVATED</b>
 
 <b>${t.symbol}</b>
-📥 Entry: $${t.entryPrice < 0.0001 ? t.entryPrice.toExponential(2) : t.entryPrice.toFixed(6)}
-📊 Current: $${t.currentPrice < 0.0001 ? t.currentPrice.toExponential(2) : t.currentPrice.toFixed(6)}
+📥 Entry: $${t.entryPrice}
+📊 Current: $${t.currentPrice}
 📈 Gain: <b>${mult}x (+${pnlPct}% / +$${pnlUsd})</b>
 
-🛑 Trail stop: $${t.trailPrice < 0.0001 ? t.trailPrice.toExponential(2) : t.trailPrice.toFixed(6)} (-5%)
+🛑 Trail stop: $${t.trailPrice} (-5%)
 🔒 Locked: +$${((t.trailPrice / t.entryPrice - 1) * 250).toFixed(0)} min
 
 <code>${t.address}</code>`;
@@ -146,8 +146,8 @@ export default async function handler(req, res) {
       const msg = `${header}
 
 <b>Token:</b> ${c.symbol}
-<b>Entry:</b> $${c.entryPrice < 0.0001 ? c.entryPrice.toExponential(2) : c.entryPrice.toFixed(6)}
-<b>Exit:</b> $${c.exitPrice < 0.0001 ? c.exitPrice.toExponential(2) : c.exitPrice.toFixed(6)}
+<b>Entry:</b> $${c.entryPrice}
+<b>Exit:</b> $${c.exitPrice}
 <b>Result:</b> ${mult}x (${pnlStr})
 <b>Reason:</b> ${c.reason === 'stop_loss' ? 'Hard Stop (-15%)' : c.reason}
 
