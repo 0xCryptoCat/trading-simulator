@@ -154,7 +154,7 @@ export default async function handler(req, res) {
         continue;
       }
       
-      console.log(`Loop ${i+1}: Checking ${openPositions.length} positions...`);
+      console.log(`Loop ${i+1}: Checking ${openPositions.length} active positions...`);
       
       // Bulk fetch prices
       const marketData = await fetchPrices(openPositions);
