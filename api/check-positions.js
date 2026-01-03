@@ -132,7 +132,6 @@ export default async function handler(req, res) {
   
   try {
     const db = new SimulatorDB(botToken);
-    await db.load();
     
     // Run loop 3 times (0s, 20s, 40s) to avoid rate limits
     // Total execution ~40-50s
@@ -143,6 +142,10 @@ export default async function handler(req, res) {
     let totalClosed = 0;
     
     for (let i = 0; i < iterations; i++) {
+      // Reload DB each iteration to avoid race conditions with new-signal.js
+      // This ensures we don't overwrite new positions added while we were sleeping
+      await db.load();
+
       const openPositions = db.getOpenPositions();
       
       if (openPositions.length === 0) {
@@ -156,16 +159,22 @@ export default async function handler(req, res) {
       // Bulk fetch prices
       const marketData = await fetchPrices(openPositions);
       
+      // RELOAD DB AGAIN to minimize race condition window
+      // We fetched prices (slow), now we get fresh DB state before applying updates
+      await db.load();
+      const freshPositions = db.getOpenPositions();
+
       const closed = [];
       const trailActivated = [];
       let dbChanged = false;
       
-      for (const pos of openPositions) {
+      for (const pos of freshPositions) {
         // Match using lowercase address
         const data = marketData[pos.address.toLowerCase()];
         
         if (!data || !data.price) {
-          console.log(`   ⚠️ No price for ${pos.symbol} (${pos.address})`);
+          // If it's a new position that wasn't in the fetch list, we skip it this time
+          // console.log(`   ⚠️ No price for ${pos.symbol} (${pos.address})`);
           continue;
         }
         
