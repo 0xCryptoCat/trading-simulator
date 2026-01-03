@@ -27,7 +27,17 @@ async function fetchPrices(addresses) {
   for (const chunk of chunks) {
     const url = `https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`;
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; Alphalert/1.0; +https://alphalert.xyz)'
+        }
+      });
+      
+      if (!res.ok) {
+        console.error(`Bulk price fetch failed: ${res.status} ${res.statusText}`);
+        continue;
+      }
+
       const data = await res.json();
       
       if (data.pairs) {
@@ -52,6 +62,10 @@ async function fetchPrices(addresses) {
           }
         }
       }
+      
+      // Respect rate limits - wait 1s between chunks
+      if (chunks.length > 1) await new Promise(r => setTimeout(r, 1000));
+      
     } catch (e) {
       console.error(`Bulk price fetch error:`, e.message);
     }
@@ -80,10 +94,10 @@ export default async function handler(req, res) {
     const db = new SimulatorDB(botToken);
     await db.load();
     
-    // Run loop 5 times (0s, 10s, 20s, 30s, 40s)
-    // Total execution ~50s
-    const iterations = 5;
-    const delayMs = 10000;
+    // Run loop 3 times (0s, 20s, 40s) to avoid rate limits
+    // Total execution ~40-50s
+    const iterations = 3;
+    const delayMs = 20000;
     
     let totalChecked = 0;
     let totalClosed = 0;
