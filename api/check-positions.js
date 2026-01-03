@@ -2,7 +2,7 @@
  * API: Check Positions
  * 
  * Cron job that runs every 1 minute to:
- * 1. Fetch current prices for all open positions (in a 5x loop)
+ * 1. Fetch current prices for all open positions (in a 3x loop)
  * 2. Check if trail activated or trail stop hit
  * 3. Update positions and post notifications
  * 
@@ -42,9 +42,8 @@ async function fetchPrices(addresses) {
       
       if (data.pairs) {
         for (const pair of data.pairs) {
-          // Prefer SOL pairs for Solana tokens, etc.
-          // But since we query by token address, we just need the most liquid pair
-          const addr = pair.baseToken.address;
+          // Normalize address to lowercase for matching
+          const addr = pair.baseToken.address.toLowerCase();
           
           // If we already have a price for this token, check if this pair is more liquid
           if (results[addr]) {
@@ -122,10 +121,11 @@ export default async function handler(req, res) {
       let dbChanged = false;
       
       for (const pos of openPositions) {
-        const data = marketData[pos.address];
+        // Match using lowercase address
+        const data = marketData[pos.address.toLowerCase()];
         
         if (!data || !data.price) {
-          console.log(`   ⚠️ No price for ${pos.symbol}`);
+          console.log(`   ⚠️ No price for ${pos.symbol} (${pos.address})`);
           continue;
         }
         
@@ -175,7 +175,17 @@ export default async function handler(req, res) {
       }
       
       if (dbChanged) {
-        await db.save();
+        try {
+          await db.save();
+        } catch (saveErr) {
+          // Ignore "canceled by new editMessageMedia request" as it means we're updating too fast
+          // The next loop will save the latest state anyway
+          if (saveErr.message && saveErr.message.includes('canceled by new editMessageMedia')) {
+            console.log('   ⚠️ Save skipped (concurrent update)');
+          } else {
+            console.error('   ⚠️ Save failed:', saveErr.message);
+          }
+        }
         
         // Send notifications
         for (const t of trailActivated) {
