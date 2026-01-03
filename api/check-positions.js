@@ -1,8 +1,8 @@
 /**
  * API: Check Positions
  * 
- * Cron job that runs every 5 minutes to:
- * 1. Fetch current prices for all open positions
+ * Cron job that runs every 1 minute to:
+ * 1. Fetch current prices for all open positions (in a 5x loop)
  * 2. Check if trail activated or trail stop hit
  * 3. Update positions and post notifications
  * 
@@ -11,32 +11,63 @@
 
 import { SimulatorDB, sendTelegramMessage, SIMULATOR_CHANNEL } from '../lib/simulator-db.js';
 
-// DexScreener price API
-async function fetchPrice(chain, tokenAddress) {
-  const chainMap = {
-    'SOL': 'solana',
-    'ETH': 'ethereum', 
-    'BSC': 'bsc',
-    'BASE': 'base'
-  };
+// DexScreener bulk price API
+async function fetchPrices(addresses) {
+  if (!addresses || addresses.length === 0) return {};
   
-  const dexChain = chainMap[chain?.toUpperCase()] || 'solana';
-  const url = `https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`;
-  
-  try {
-    const res = await fetch(url);
-    const data = await res.json();
-    
-    if (data.pairs && data.pairs.length > 0) {
-      // Find pair on correct chain
-      const pair = data.pairs.find(p => p.chainId === dexChain) || data.pairs[0];
-      return parseFloat(pair.priceUsd) || 0;
-    }
-  } catch (e) {
-    console.error(`Price fetch error for ${tokenAddress}:`, e.message);
+  // DexScreener supports up to 30 addresses per call
+  // We'll chunk them just in case
+  const chunks = [];
+  for (let i = 0; i < addresses.length; i += 30) {
+    chunks.push(addresses.slice(i, i + 30));
   }
   
-  return 0;
+  const results = {};
+  
+  for (const chunk of chunks) {
+    const url = `https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`;
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      
+      if (data.pairs) {
+        for (const pair of data.pairs) {
+          // Prefer SOL pairs for Solana tokens, etc.
+          // But since we query by token address, we just need the most liquid pair
+          const addr = pair.baseToken.address;
+          
+          // If we already have a price for this token, check if this pair is more liquid
+          if (results[addr]) {
+            if (pair.liquidity?.usd > results[addr].liquidity) {
+              results[addr] = {
+                price: parseFloat(pair.priceUsd),
+                liquidity: pair.liquidity?.usd || 0
+              };
+            }
+          } else {
+            results[addr] = {
+              price: parseFloat(pair.priceUsd),
+              liquidity: pair.liquidity?.usd || 0
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`Bulk price fetch error:`, e.message);
+    }
+  }
+  
+  return results;
+}
+
+// Helper to calculate slippage
+function getSlippage(tradeSize, liquidity) {
+  if (!liquidity || liquidity === 0) return 0;
+  // Simple linear slippage model: 1% slippage for every 1% of pool size traded
+  // e.g. $250 trade in $25k pool = 1% slippage
+  // Cap at 50% to avoid crazy numbers
+  const impact = tradeSize / liquidity;
+  return Math.min(impact, 0.5);
 }
 
 export default async function handler(req, res) {
@@ -49,75 +80,96 @@ export default async function handler(req, res) {
     const db = new SimulatorDB(botToken);
     await db.load();
     
-    const openPositions = db.getOpenPositions();
+    // Run loop 5 times (0s, 10s, 20s, 30s, 40s)
+    // Total execution ~50s
+    const iterations = 5;
+    const delayMs = 10000;
     
-    if (openPositions.length === 0) {
-      return res.status(200).json({ 
-        status: 'ok', 
-        message: 'No open positions',
-        stats: db.getStats()
-      });
-    }
+    let totalChecked = 0;
+    let totalClosed = 0;
     
-    console.log(`Checking ${openPositions.length} open positions...`);
-    
-    const updates = [];
-    const closed = [];
-    const trailActivated = [];
-    
-    for (const pos of openPositions) {
-      const currentPrice = await fetchPrice(pos.chain, pos.address);
+    for (let i = 0; i < iterations; i++) {
+      const openPositions = db.getOpenPositions();
       
-      if (currentPrice === 0) {
-        console.log(`   ⚠️ No price for ${pos.symbol}`);
+      if (openPositions.length === 0) {
+        console.log(`Loop ${i+1}: No open positions`);
+        if (i < iterations - 1) await new Promise(r => setTimeout(r, delayMs));
         continue;
       }
       
-      const previousStatus = pos.status;
-      const result = db.updatePosition(pos.address, currentPrice);
+      console.log(`Loop ${i+1}: Checking ${openPositions.length} positions...`);
       
-      if (!result) continue;
+      // Bulk fetch prices
+      const addresses = openPositions.map(p => p.address);
+      const marketData = await fetchPrices(addresses);
       
-      if (result.action === 'closed') {
-        closed.push({
-          symbol: pos.symbol,
-          chain: pos.chain,
-          address: pos.address,
-          entryPrice: pos.entryPrice,
-          exitPrice: result.position.exitPrice,
-          pnl: result.position.pnl,
-          reason: result.reason
-        });
-      } else if (result.position.status === 'trailing' && previousStatus === 'active') {
-        trailActivated.push({
-          symbol: pos.symbol,
-          chain: pos.chain,
-          address: pos.address,
-          entryPrice: pos.entryPrice,
-          currentPrice,
-          peakPrice: result.position.peakPrice,
-          trailPrice: result.position.trailPrice
-        });
-      } else {
-        updates.push({
-          symbol: pos.symbol,
-          status: result.position.status,
-          currentMult: (currentPrice / pos.entryPrice).toFixed(2),
-          pnl: result.position.pnl.toFixed(2)
-        });
+      const closed = [];
+      const trailActivated = [];
+      let dbChanged = false;
+      
+      for (const pos of openPositions) {
+        const data = marketData[pos.address];
+        
+        if (!data || !data.price) {
+          console.log(`   ⚠️ No price for ${pos.symbol}`);
+          continue;
+        }
+        
+        const slippage = getSlippage(pos.size, data.liquidity);
+        
+        const previousStatus = pos.status;
+        const result = db.updatePosition(pos.address, data.price);
+        
+        if (!result) continue;
+        dbChanged = true;
+        
+        if (result.action === 'closed') {
+          // Apply slippage to the exit
+          // updatePosition already closed it with data.price. We need to adjust it.
+          const realExitPrice = data.price * (1 - slippage);
+          
+          // Update the DB entry directly
+          const dbPos = db.getPosition(pos.address);
+          dbPos.exitPrice = realExitPrice;
+          dbPos.pnl = (realExitPrice / dbPos.entryPrice - 1) * dbPos.size;
+          
+          // Re-update stats (subtract old PnL, add new PnL)
+          db.db.stats.totalPnL -= result.position.pnl; // Remove the non-slippage PnL
+          db.db.stats.totalPnL += dbPos.pnl; // Add real PnL
+          
+          closed.push({
+            symbol: pos.symbol,
+            chain: pos.chain,
+            address: pos.address,
+            entryPrice: pos.entryPrice,
+            exitPrice: realExitPrice,
+            pnl: dbPos.pnl,
+            reason: result.reason,
+            slippage: (slippage * 100).toFixed(2)
+          });
+        } else if (result.position.status === 'trailing' && previousStatus === 'active') {
+          trailActivated.push({
+            symbol: pos.symbol,
+            chain: pos.chain,
+            address: pos.address,
+            entryPrice: pos.entryPrice,
+            currentPrice: data.price,
+            peakPrice: result.position.peakPrice,
+            trailPrice: result.position.trailPrice
+          });
+        }
       }
-    }
-    
-    // Save after all updates
-    await db.save();
-    
-    // Send notifications for trail activations
-    for (const t of trailActivated) {
-      const mult = (t.currentPrice / t.entryPrice).toFixed(2);
-      const pnlPct = ((mult - 1) * 100).toFixed(0);
-      const pnlUsd = ((mult - 1) * 250).toFixed(0);
       
-      const msg = `🚀 <b>TRAIL ACTIVATED</b>
+      if (dbChanged) {
+        await db.save();
+        
+        // Send notifications
+        for (const t of trailActivated) {
+          const mult = (t.currentPrice / t.entryPrice).toFixed(2);
+          const pnlPct = ((mult - 1) * 100).toFixed(0);
+          const pnlUsd = ((mult - 1) * 250).toFixed(0);
+          
+          const msg = `🚀 <b>TRAIL ACTIVATED</b>
 
 <b>${t.symbol}</b>
 📥 Entry: $${t.entryPrice}
@@ -128,39 +180,46 @@ export default async function handler(req, res) {
 🔒 Locked: +$${((t.trailPrice / t.entryPrice - 1) * 250).toFixed(0)} min
 
 <code>${t.address}</code>`;
-      
-      await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, msg);
-    }
-    
-    // Send notifications for closed positions
-    for (const c of closed) {
-      const mult = (c.exitPrice / c.entryPrice).toFixed(2);
-      const pnlEmoji = c.pnl >= 0 ? '💰' : '�';
-      const pnlStr = c.pnl >= 0 ? `+$${c.pnl.toFixed(2)}` : `-$${Math.abs(c.pnl).toFixed(2)}`;
-      
-      // Different header for stop loss vs trail
-      const header = c.reason === 'stop_loss' 
-        ? '🛑 <b>STOP LOSS HIT</b>' 
-        : (c.pnl >= 0 ? '💰 <b>POSITION CLOSED</b>' : '📉 <b>POSITION CLOSED</b>');
-      
-      const msg = `${header}
+          
+          await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, msg);
+        }
+        
+        for (const c of closed) {
+          const mult = (c.exitPrice / c.entryPrice).toFixed(2);
+          const pnlStr = c.pnl >= 0 ? `+$${c.pnl.toFixed(2)}` : `-$${Math.abs(c.pnl).toFixed(2)}`;
+          
+          const header = c.reason === 'stop_loss' 
+            ? '🛑 <b>STOP LOSS HIT</b>' 
+            : (c.pnl >= 0 ? '💰 <b>POSITION CLOSED</b>' : '📉 <b>POSITION CLOSED</b>');
+          
+          const msg = `${header}
 
 <b>Token:</b> ${c.symbol}
 <b>Entry:</b> $${c.entryPrice}
-<b>Exit:</b> $${c.exitPrice}
+<b>Exit:</b> $${c.exitPrice.toFixed(6)} (Slip: ${c.slippage}%)
 <b>Result:</b> ${mult}x (${pnlStr})
 <b>Reason:</b> ${c.reason === 'stop_loss' ? 'Hard Stop (-15%)' : c.reason}
 
 <code>${c.address}</code>`;
+          
+          await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, msg);
+          totalClosed++;
+        }
+      }
       
-      await sendTelegramMessage(botToken, SIMULATOR_CHANNEL, msg);
+      totalChecked = openPositions.length;
+      
+      // Wait for next loop (unless it's the last one)
+      if (i < iterations - 1) {
+        await new Promise(r => setTimeout(r, delayMs));
+      }
     }
     
     return res.status(200).json({
       status: 'ok',
-      checked: openPositions.length,
-      trailActivated: trailActivated.length,
-      closed: closed.length,
+      loops: iterations,
+      checked: totalChecked,
+      closed: totalClosed,
       stats: db.getStats()
     });
     
