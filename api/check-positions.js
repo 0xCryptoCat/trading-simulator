@@ -12,8 +12,10 @@
 import { SimulatorDB, sendTelegramMessage, SIMULATOR_CHANNEL } from '../lib/simulator-db.js';
 
 // DexScreener bulk price API
-async function fetchPrices(addresses) {
-  if (!addresses || addresses.length === 0) return {};
+async function fetchPrices(positions) {
+  if (!positions || positions.length === 0) return {};
+  
+  const addresses = positions.map(p => p.address);
   
   // DexScreener supports up to 30 addresses per call
   // We'll chunk them just in case
@@ -70,6 +72,45 @@ async function fetchPrices(addresses) {
     }
   }
   
+  // Fallback to GeckoTerminal for missing tokens
+  const missing = positions.filter(p => !results[p.address.toLowerCase()]);
+  
+  if (missing.length > 0) {
+    console.log(`   ⚠️ DexScreener missing ${missing.length} tokens. Trying GeckoTerminal...`);
+    
+    const chainMap = {
+      'sol': 'solana',
+      'eth': 'eth',
+      'bsc': 'bsc',
+      'base': 'base'
+    };
+    
+    for (const pos of missing) {
+      const network = chainMap[pos.chain?.toLowerCase()];
+      if (!network) continue;
+      
+      const url = `https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${pos.address}`;
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          const attr = data.data?.attributes;
+          if (attr) {
+            results[pos.address.toLowerCase()] = {
+              price: parseFloat(attr.price_usd),
+              liquidity: parseFloat(attr.total_reserve_in_usd || 0) // GT uses total_reserve_in_usd
+            };
+            console.log(`   ✅ Found ${pos.symbol} on GeckoTerminal`);
+          }
+        }
+        // Be nice to GT API
+        await new Promise(r => setTimeout(r, 500));
+      } catch (e) {
+        console.error(`   ❌ GeckoTerminal failed for ${pos.symbol}: ${e.message}`);
+      }
+    }
+  }
+  
   return results;
 }
 
@@ -113,8 +154,7 @@ export default async function handler(req, res) {
       console.log(`Loop ${i+1}: Checking ${openPositions.length} positions...`);
       
       // Bulk fetch prices
-      const addresses = openPositions.map(p => p.address);
-      const marketData = await fetchPrices(addresses);
+      const marketData = await fetchPrices(openPositions);
       
       const closed = [];
       const trailActivated = [];
