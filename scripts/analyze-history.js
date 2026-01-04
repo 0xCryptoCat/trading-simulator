@@ -1,18 +1,92 @@
 
 import fs from 'fs';
 
-const DB_PATH = '/Users/majsai/Downloads/trading-simulator-db-latest.json';
+const DB_PATHS = [
+    '/Users/majsai/Downloads/trading-simulator-db-new.json',
+    '/Users/majsai/Downloads/trading-simulator-db-old.json'
+];
 
 function analyze() {
-    if (!fs.existsSync(DB_PATH)) {
-        console.error(`File not found: ${DB_PATH}`);
-        return;
-    }
+    let allHistory = [];
 
-    const data = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-    const history = data.history || [];
+    DB_PATHS.forEach(path => {
+        if (!fs.existsSync(path)) {
+            console.error(`File not found: ${path}`);
+            return;
+        }
+        try {
+            const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const history = data.history || [];
+            console.log(`Loaded ${history.length} trades from ${path.split('/').pop()}`);
+            if (history.length > 0) {
+                console.log(`  First: ${history[0].symbol} (${history[0].address})`);
+                console.log(`  Last:  ${history[history.length-1].symbol} (${history[history.length-1].address})`);
+            }
+            allHistory = allHistory.concat(history);
+        } catch (e) {
+            console.error(`Error reading ${path}:`, e.message);
+        }
+    });
+
+    // Deduplicate based on address + entry price (to handle re-entries if any, though unlikely with same price)
+    // Using a Map to keep the "latest" version if duplicates exist (though they should be identical)
+    const uniqueTrades = new Map();
     
-    console.log(`Loaded ${history.length} trades from history.`);
+    allHistory.forEach(trade => {
+        // Normalize fields
+        const address = trade.address || trade.tokenAddress;
+        const entry = trade.entry || trade.entryPrice;
+        
+        if (!address) return;
+        
+        const key = `${address}-${entry}`;
+        uniqueTrades.set(key, trade);
+    });
+    
+    const history = Array.from(uniqueTrades.values());
+    
+    console.log(`\nMerged Total: ${history.length} unique trades.`);
+
+    // Check positions for missing history
+    let recoveredCount = 0;
+    DB_PATHS.forEach(path => {
+        if (!fs.existsSync(path)) return;
+        try {
+            const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const positions = data.positions || {};
+            Object.entries(positions).forEach(([key, pos]) => {
+                if (pos.status === 'exited') {
+                    // Check if in history
+                    const address = pos.tokenAddress || key;
+                    const exists = history.some(h => h.address === address && Math.abs(h.entry - pos.entryPrice) < 0.000000001);
+                    if (!exists) {
+                        // Reconstruct history item
+                        const item = {
+                            address: address,
+                            symbol: pos.symbol,
+                            chain: pos.chain,
+                            entry: pos.entryPrice,
+                            exit: pos.exitPrice,
+                            pnl: pos.pnl,
+                            reason: pos.exitReason,
+                            duration: (pos.exitTime || 0) - (pos.entryTime || 0)
+                        };
+                        // Add to history if valid
+                        if (item.entry && item.exit) {
+                            history.push(item);
+                            recoveredCount++;
+                        }
+                    }
+                }
+            });
+        } catch (e) {}
+    });
+    
+    if (recoveredCount > 0) {
+        console.log(`♻️ Recovered ${recoveredCount} trades from 'positions' object!`);
+        console.log(`Total Trades Now: ${history.length}`);
+    }
+    
     if (history.length > 0) {
         console.log('Sample trade:', JSON.stringify(history[0], null, 2));
     }
